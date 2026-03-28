@@ -85,23 +85,105 @@ function buildDefaultRfqSubject(opportunity: { ref_code: string; title: string }
   return `RFQ - ${opportunity.title}`;
 }
 
+function getPayloadText(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key];
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  return null;
+}
+
+function buildSection(title: string, lines: Array<string | null>) {
+  const filteredLines = lines.filter((line): line is string => Boolean(line && line.trim()));
+
+  if (filteredLines.length === 0) {
+    return null;
+  }
+
+  return [title, "", ...filteredLines].join("\n");
+}
+
 function buildDefaultRfqBody(
-  opportunity: { title: string },
+  opportunity: { ref_code: string; title: string },
   requirement: StructuredRequirementRecord | null,
   request: RequestRecord | null
 ) {
+  const payload = request?.raw_payload_json;
+  const productType = requirement?.product_type || requirement?.format || getPayloadText(payload, "product_type");
+  const targetBenefit = requirement?.target_benefit || getPayloadText(payload, "product_goal");
+  const quantity = requirement?.quantity_units ? String(requirement.quantity_units) : getPayloadText(payload, "target_quantity");
+  const packSize = requirement?.pack_size || getPayloadText(payload, "pack_size");
+  const packaging = requirement?.packaging_type || getPayloadText(payload, "packaging_preference");
+  const market = requirement?.market || getPayloadText(payload, "target_market");
+  const timeline = requirement?.timeline || getPayloadText(payload, "launch_timeline");
+  const formulaDirection = getPayloadText(payload, "formula_direction");
+  const ingredients = getPayloadText(payload, "ingredients_and_dosages");
+  const notes = getPayloadText(payload, "extra_notes");
+  const positioning = requirement?.target_positioning || getPayloadText(payload, "budget_positioning");
+  const formulationHelp = requirement?.formulation_support_needed
+    ? "Customer would like formulation support."
+    : getPayloadText(payload, "needs_formulation_help") === "yes"
+      ? "Customer would like formulation support."
+      : null;
+  const packagingHelp = getPayloadText(payload, "needs_packaging_label_help") === "yes"
+    ? "Customer would also like packaging / label support."
+    : null;
+
+  const formulaLines = ingredients
+    ? ingredients
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => (line.startsWith("-") || line.startsWith("?") ? line : `- ${line}`))
+    : [];
+
+  if (formulaLines.length === 0 && formulaDirection) {
+    formulaLines.push(`- Formula direction: ${formulaDirection}`);
+  }
+
+  if (formulaLines.length === 0 && requirement?.cleaned_summary) {
+    formulaLines.push(`- ${requirement.cleaned_summary}`);
+  }
+
+  const requestAsks = [
+    quantity ? `- Cost per unit at ${quantity} units.` : "- Cost per unit at the advised MOQ.",
+    "- Lead time from formulation sign-off to production.",
+    packaging ? `- Any MOQ or pricing impact for ${packaging.toLowerCase()} or packaging upgrades.` : "- Any MOQ or pricing impact for packaging options or upgrades.",
+    ingredients ? "- Please flag any standardised, branded, or cost-saving ingredient options where relevant." : null,
+    formulationHelp ? "- Please advise if you can support formulation refinement before production." : null,
+  ].filter((line): line is string => Boolean(line));
+
   return [
-    `Opportunity: ${opportunity.title}`,
-    requirement?.product_type ? `Product type: ${requirement.product_type}` : request?.raw_payload_json?.product_type ? `Product type: ${String(request.raw_payload_json.product_type)}` : null,
-    requirement?.target_benefit ? `Target benefit: ${requirement.target_benefit}` : request?.raw_payload_json?.product_goal ? `Target benefit: ${String(request.raw_payload_json.product_goal)}` : null,
-    requirement?.market ? `Market: ${requirement.market}` : null,
-    requirement?.quantity_units ? `Quantity: ${requirement.quantity_units}` : request?.raw_payload_json?.target_quantity ? `Quantity: ${String(request.raw_payload_json.target_quantity)}` : null,
-    requirement?.packaging_type ? `Packaging: ${requirement.packaging_type}` : null,
-    requirement?.timeline ? `Timeline: ${requirement.timeline}` : request?.raw_payload_json?.launch_timeline ? `Timeline: ${String(request.raw_payload_json.launch_timeline)}` : null,
-    requirement?.cleaned_summary ? `Summary: ${requirement.cleaned_summary}` : null,
+    `${opportunity.ref_code} - ${opportunity.title}`,
+    buildSection("Product Overview", [
+      productType ? `Format: ${productType}` : null,
+      targetBenefit ? `Target benefit: ${targetBenefit}` : null,
+      packSize ? `Pack size: ${packSize}` : null,
+      quantity ? `MOQ: ${quantity} units` : null,
+      market ? `Target market: ${market}` : null,
+      positioning ? `Positioning: ${positioning}` : null,
+      timeline ? `Target timeline: ${timeline}` : null,
+    ]),
+    buildSection("Proposed Formula", [
+      ...formulaLines,
+      formulationHelp,
+    ]),
+    buildSection("Packaging", [
+      packaging ? `Packaging preference: ${packaging}` : null,
+      packagingHelp,
+      notes ? `Notes: ${notes}` : null,
+    ]),
+    buildSection("Request", requestAsks),
   ]
-    .filter(Boolean)
-    .join("\n");
+    .filter((section): section is string => Boolean(section && section.trim()))
+    .join("\n\n");
 }
 
 function formatCurrency(currency: string, amount: number) {
