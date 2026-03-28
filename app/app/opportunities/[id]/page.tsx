@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import CopyTextButton from "./CopyTextButton";
+
 import { requireWorkspaceContext } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -557,7 +559,10 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
                   <div className="mt-2 rounded-2xl bg-[#faf7f2] p-4 text-sm text-neutral-800">{defaultRfqSubject}</div>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Suggested message</p>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Suggested message</p>
+                    {defaultRfqBody ? <CopyTextButton text={defaultRfqBody} label="Copy message body" /> : null}
+                  </div>
                   <pre className="mt-2 whitespace-pre-wrap rounded-2xl bg-[#faf7f2] p-4 font-sans text-sm leading-6 text-neutral-800">
                     {defaultRfqBody || "Complete the structured requirement to generate a better supplier brief."}
                   </pre>
@@ -645,7 +650,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
             const markSent = markSupplierRfqSentAction.bind(null, opportunity.id, rfq.id);
             const mailtoHref = buildMailtoHref(rfq);
 
-            return <div key={rfq.id} className="rounded-3xl border border-black/8 bg-white p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold text-neutral-950">{rfq.supplier_name}</h2><p className="mt-1 text-sm text-neutral-600">{rfq.rfq_subject || "No subject"}</p></div><div className="flex items-center gap-3"><Link href={`/app/opportunities/${opportunity.id}/rfqs/${rfq.id}`} className="text-sm text-neutral-600 underline underline-offset-4">Edit</Link><span className="rounded-full border border-black/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-neutral-700">{rfq.status}</span></div></div><div className="mt-4 grid gap-3 text-sm text-neutral-600 md:grid-cols-3"><p>Contact: {rfq.supplier_contact_name || "Not set"}</p><p>Email: {rfq.supplier_email || "Not set"}</p><p>Sent: {formatDate(rfq.sent_at)}</p></div><div className="mt-5 flex flex-wrap gap-3">{mailtoHref ? <a href={mailtoHref} className="inline-flex rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-900">Draft supplier email</a> : null}{rfq.status !== "sent" ? <form action={markSent}><button type="submit" className="inline-flex rounded-xl bg-neutral-950 px-4 py-2 text-sm font-medium text-white">Mark sent and capture response</button></form> : null}<Link href={`/app/opportunities/${opportunity.id}?tab=responses&rfqId=${rfq.id}`} className="inline-flex rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-900">Log supplier response</Link></div></div>;
+            return <div key={rfq.id} className="rounded-3xl border border-black/8 bg-white p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold text-neutral-950">{rfq.supplier_name}</h2><p className="mt-1 text-sm text-neutral-600">{rfq.rfq_subject || "No subject"}</p></div><div className="flex items-center gap-3"><Link href={`/app/opportunities/${opportunity.id}/rfqs/${rfq.id}`} className="text-sm text-neutral-600 underline underline-offset-4">Edit</Link><span className="rounded-full border border-black/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-neutral-700">{rfq.status}</span></div></div><div className="mt-4 grid gap-3 text-sm text-neutral-600 md:grid-cols-3"><p>Contact: {rfq.supplier_contact_name || "Not set"}</p><p>Email: {rfq.supplier_email || "Not set"}</p><p>Sent: {formatDate(rfq.sent_at)}</p></div><div className="mt-5 flex flex-wrap gap-3">{rfq.rfq_body ? <CopyTextButton text={rfq.rfq_body} label="Copy RFQ body" /> : null}{mailtoHref ? <a href={mailtoHref} className="inline-flex rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-900">Draft supplier email</a> : null}{rfq.status !== "sent" ? <form action={markSent}><button type="submit" className="inline-flex rounded-xl bg-neutral-950 px-4 py-2 text-sm font-medium text-white">Mark RFQ as sent</button></form> : null}<Link href={`/app/opportunities/${opportunity.id}?tab=responses&rfqId=${rfq.id}`} className="inline-flex rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-900">Log supplier response</Link></div></div>;
           }) : <div className="rounded-3xl border border-black/8 bg-white p-8 text-sm text-neutral-600">No supplier RFQs created yet.</div>}
         </section>
       ) : null}
