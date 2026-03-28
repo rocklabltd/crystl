@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseActionClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   customerQuoteSchema,
   opportunityWorkflowSchema,
@@ -86,7 +86,7 @@ const opportunityStageOrder = [
 ] as const;
 
 async function advanceOpportunityStage(
-  supabase: Awaited<ReturnType<typeof createSupabaseActionClient>>,
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
   opportunity: { id: string; stage: string },
   nextStage: (typeof opportunityStageOrder)[number]
 ) {
@@ -125,7 +125,7 @@ async function requireEditableOpportunity(opportunityId: string) {
     redirect(`/app/opportunities/${opportunityId}?error=forbidden`);
   }
 
-  const supabase = await createSupabaseActionClient();
+  const supabase = createSupabaseAdminClient();
   const { data: opportunity, error } = await supabase
     .from("opportunities")
     .select("id, request_id, title, stage, priority, outcome_reason")
@@ -202,7 +202,7 @@ async function requireCustomerQuote(opportunityId: string, quoteId: string) {
 }
 
 async function createQuoteNumber(opportunityId: string, workspaceId: string, quotePrefix: string | null) {
-  const supabase = await createSupabaseActionClient();
+  const supabase = createSupabaseAdminClient();
   const { data: opportunityIds } = await supabase
     .from("opportunities")
     .select("id")

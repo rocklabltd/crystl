@@ -4,18 +4,22 @@ import { notFound } from "next/navigation";
 import { requireWorkspaceContext } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-import { duplicateSupplierRfqAction, updateSupplierRfqAction } from "../../actions";
+import { duplicateSupplierRfqAction, markSupplierRfqSentAction, updateSupplierRfqAction } from "../../actions";
 
 type PageParams = { id: string; rfqId: string };
 
-type SearchParams = { error?: string };
+type SearchParams = { error?: string; saved?: string };
 
-function flashMessage(error?: string) {
+function flashMessage(error?: string, saved?: string) {
+  if (saved === "rfq_sent") {
+    return { tone: "success", text: "Supplier RFQ marked sent. Next step: capture the supplier response." };
+  }
+
   switch (error) {
     case "validation":
-      return "Please check the RFQ fields and try again.";
+      return { tone: "error", text: "Please check the RFQ fields and try again." };
     case "save":
-      return "We could not save this RFQ.";
+      return { tone: "error", text: "We could not save this RFQ." };
     default:
       return null;
   }
@@ -40,7 +44,8 @@ export default async function SupplierRfqEditPage({ params, searchParams }: { pa
 
   const updateRfq = updateSupplierRfqAction.bind(null, id, rfq.id);
   const duplicateRfq = duplicateSupplierRfqAction.bind(null, id, rfq.id);
-  const message = flashMessage(resolvedSearchParams.error);
+  const markSent = markSupplierRfqSentAction.bind(null, id, rfq.id);
+  const message = flashMessage(resolvedSearchParams.error, resolvedSearchParams.saved);
 
   return (
     <div>
@@ -51,12 +56,15 @@ export default async function SupplierRfqEditPage({ params, searchParams }: { pa
           <h1 className="mt-2 text-3xl font-semibold text-neutral-950">Edit {rfq.supplier_name}</h1>
           <p className="mt-2 text-neutral-600">Workspace: {workspace.brand_name || workspace.name}</p>
         </div>
-        <form action={duplicateRfq}>
-          <button type="submit" className="inline-flex rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-medium text-neutral-800">Duplicate as draft</button>
-        </form>
+        <div className="flex flex-wrap gap-3">
+          {rfq.status !== "sent" ? <form action={markSent}><button type="submit" className="inline-flex rounded-xl bg-neutral-950 px-4 py-3 text-sm font-medium text-white">Mark RFQ as sent</button></form> : <span className="inline-flex rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">RFQ already sent</span>}
+          <form action={duplicateRfq}>
+            <button type="submit" className="inline-flex rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-medium text-neutral-800">Duplicate as draft</button>
+          </form>
+        </div>
       </div>
 
-      {message ? <p className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{message}</p> : null}
+      {message ? <p className={["mt-6 rounded-2xl px-4 py-3 text-sm", message.tone === "success" ? "border border-green-200 bg-green-50 text-green-800" : "border border-red-200 bg-red-50 text-red-700"].join(" ")}>{message.text}</p> : null}
 
       <section className="mt-6 rounded-3xl border border-black/8 bg-white p-6">
         <form action={updateRfq} className="grid gap-4">
