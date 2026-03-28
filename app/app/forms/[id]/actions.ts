@@ -77,36 +77,54 @@ export async function updateFormFieldAction(formId: string, fieldId: string, for
     required: formData.get("required") ?? "false",
     is_active: formData.get("is_active") ?? "false",
     sort_order: formData.get("sort_order"),
-    options_json: formData.get("options_json"),
-    conditional_logic_json: formData.get("conditional_logic_json"),
+    option_lines: formData.get("option_lines"),
+    conditional_enabled: formData.get("conditional_enabled") ?? "false",
+    conditional_field: formData.get("conditional_field"),
+    conditional_operator: formData.get("conditional_operator") ?? "equals",
+    conditional_value: formData.get("conditional_value"),
   });
 
   if (!parsed.success) {
     redirect(`/app/forms/${formId}?error=validation`);
   }
 
-  let optionsJson = null;
-  let conditionalLogicJson = null;
-
-  if (parsed.data.options_json) {
-    try {
-      optionsJson = JSON.parse(parsed.data.options_json);
-    } catch {
-      redirect(`/app/forms/${formId}?error=json`);
-    }
-  }
-
-  if (parsed.data.conditional_logic_json) {
-    try {
-      conditionalLogicJson = JSON.parse(parsed.data.conditional_logic_json);
-    } catch {
-      redirect(`/app/forms/${formId}?error=json`);
-    }
-  }
-
   const sortOrder = Number(parsed.data.sort_order);
   if (!Number.isFinite(sortOrder)) {
     redirect(`/app/forms/${formId}?error=validation`);
+  }
+
+  const optionLines = (parsed.data.option_lines || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const optionsJson = optionLines.length
+    ? optionLines.map((line) => {
+        const parts = line.split("|").map((part) => part.trim());
+        if (parts.length === 2 && parts[0] && parts[1]) {
+          return { label: parts[0], value: parts[1] };
+        }
+
+        return line;
+      })
+    : null;
+
+  let conditionalLogicJson = null;
+  if (parsed.data.conditional_enabled === "true" && parsed.data.conditional_field && parsed.data.conditional_value) {
+    const values = parsed.data.conditional_operator === "in"
+      ? parsed.data.conditional_value
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : parsed.data.conditional_value.trim();
+
+    conditionalLogicJson = {
+      showWhen: {
+        field: parsed.data.conditional_field,
+        operator: parsed.data.conditional_operator,
+        value: values,
+      },
+    };
   }
 
   const { error } = await supabase

@@ -63,6 +63,17 @@ export default async function FormDetailPage({ params, searchParams }: { params:
           <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-neutral-500">Form detail</p>
           <h1 className="mt-2 text-3xl font-semibold text-neutral-950">{form.name}</h1>
           <p className="mt-2 text-neutral-600">Public URL: /w/{workspace.slug}/f/{form.slug}</p>
+          <div className="mt-4 flex flex-wrap gap-3 text-sm">
+            <Link href={`/w/${workspace.slug}/f/${form.slug}`} target="_blank" className="inline-flex rounded-xl border border-black/10 px-4 py-3 font-medium text-neutral-700">
+              Open hosted form
+            </Link>
+            <a href={`/app/forms/${form.id}/embed-snippet`} className="inline-flex rounded-xl border border-black/10 px-4 py-3 font-medium text-neutral-700">
+              Download iframe snippet
+            </a>
+            <a href={`/app/forms/${form.id}/embed-snippet?mode=button`} className="inline-flex rounded-xl border border-black/10 px-4 py-3 font-medium text-neutral-700">
+              Download button snippet
+            </a>
+          </div>
         </div>
         <p className="text-sm text-neutral-500">Current role: {membership.role}</p>
       </div>
@@ -88,7 +99,7 @@ export default async function FormDetailPage({ params, searchParams }: { params:
       <section className="mt-6 space-y-4">
         <div>
           <h2 className="text-xl font-semibold text-neutral-950">Fields</h2>
-          <p className="mt-1 text-sm text-neutral-600">Edit labels, helpers, ordering, and JSON config for each field in the hosted form.</p>
+          <p className="mt-1 text-sm text-neutral-600">Edit labels, helpers, ordering, options, and conditional visibility for each hosted field without touching raw JSON.</p>
         </div>
         {(fields ?? []).map((field) => {
           const updateField = updateFormFieldAction.bind(null, form.id, field.id);
@@ -110,8 +121,44 @@ export default async function FormDetailPage({ params, searchParams }: { params:
                 <div><label className="block text-sm font-medium text-neutral-800">Active</label><select name="is_active" defaultValue={field.is_active ? "true" : "false"} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3"><option value="true">Active</option><option value="false">Hidden</option></select></div>
               </div>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <div><label className="block text-sm font-medium text-neutral-800">Options JSON</label><textarea name="options_json" defaultValue={field.options_json ? JSON.stringify(field.options_json, null, 2) : ""} className="mt-1 min-h-32 w-full rounded-xl border border-neutral-200 px-4 py-3 font-mono text-sm" /></div>
-                <div><label className="block text-sm font-medium text-neutral-800">Conditional logic JSON</label><textarea name="conditional_logic_json" defaultValue={field.conditional_logic_json ? JSON.stringify(field.conditional_logic_json, null, 2) : ""} className="mt-1 min-h-32 w-full rounded-xl border border-neutral-200 px-4 py-3 font-mono text-sm" /></div>
+                <div>
+                  <label className="block text-sm font-medium text-neutral-800">Options</label>
+                  <textarea
+                    name="option_lines"
+                    defaultValue={Array.isArray(field.options_json) ? field.options_json.map((option) => typeof option === "string" ? option : `${option.label || option.value || ""}|${option.value || option.label || ""}`).join("\n") : ""}
+                    className="mt-1 min-h-32 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm"
+                    placeholder={field.field_type === "select" || field.field_type === "radio" ? "One option per line. Use Label|value for custom values." : "Only needed for select or radio fields."}
+                  />
+                  <p className="mt-2 text-xs text-neutral-500">Use one option per line. For custom values, write `Label|value`.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-neutral-800">Conditional visibility</label>
+                  <div className="mt-1 grid gap-3 rounded-2xl border border-neutral-200 p-4">
+                    <div>
+                      <label className="block text-xs font-medium uppercase tracking-[0.16em] text-neutral-500">Rule enabled</label>
+                      <select name="conditional_enabled" defaultValue={field.conditional_logic_json ? "true" : "false"} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm">
+                        <option value="false">Always show</option>
+                        <option value="true">Only show when another field matches</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium uppercase tracking-[0.16em] text-neutral-500">Field key to watch</label>
+                      <input name="conditional_field" defaultValue={typeof field.conditional_logic_json === "object" && field.conditional_logic_json && "showWhen" in field.conditional_logic_json && typeof field.conditional_logic_json.showWhen === "object" && field.conditional_logic_json.showWhen && "field" in field.conditional_logic_json.showWhen ? String(field.conditional_logic_json.showWhen.field || "") : ""} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm" placeholder="e.g. formula_direction" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium uppercase tracking-[0.16em] text-neutral-500">Operator</label>
+                      <select name="conditional_operator" defaultValue={typeof field.conditional_logic_json === "object" && field.conditional_logic_json && "showWhen" in field.conditional_logic_json && typeof field.conditional_logic_json.showWhen === "object" && field.conditional_logic_json.showWhen && "operator" in field.conditional_logic_json.showWhen ? String(field.conditional_logic_json.showWhen.operator || "equals") : "equals"} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm">
+                        <option value="equals">Equals one value</option>
+                        <option value="in">Matches any in list</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium uppercase tracking-[0.16em] text-neutral-500">Value or values</label>
+                      <input name="conditional_value" defaultValue={typeof field.conditional_logic_json === "object" && field.conditional_logic_json && "showWhen" in field.conditional_logic_json && typeof field.conditional_logic_json.showWhen === "object" && field.conditional_logic_json.showWhen && "value" in field.conditional_logic_json.showWhen ? Array.isArray(field.conditional_logic_json.showWhen.value) ? field.conditional_logic_json.showWhen.value.join(", ") : String(field.conditional_logic_json.showWhen.value || "") : ""} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm" placeholder="e.g. have_formula, have_ingredients" />
+                      <p className="mt-2 text-xs text-neutral-500">Use commas when the operator is `Matches any in list`.</p>
+                    </div>
+                  </div>
+                </div>
               </div>
               <button type="submit" disabled={membership.role === "viewer" || membership.role === "sales"} className="mt-4 inline-flex rounded-xl bg-neutral-950 px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-neutral-300">Save field</button>
             </form>

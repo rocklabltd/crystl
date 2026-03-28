@@ -33,6 +33,9 @@ export const formFieldSchema = z.object({
   required: z.enum(["true", "false"]).default("false"),
   is_active: z.enum(["true", "false"]).default("true"),
   sort_order: z.string().trim().min(1, "Sort order is required"),
-  options_json: z.string().trim().optional(),
-  conditional_logic_json: z.string().trim().optional(),
+  option_lines: z.string().trim().optional(),
+  conditional_enabled: z.enum(["true", "false"]).default("false"),
+  conditional_field: z.string().trim().optional(),
+  conditional_operator: z.enum(["equals", "in"]).default("equals"),
+  conditional_value: z.string().trim().optional(),
 });

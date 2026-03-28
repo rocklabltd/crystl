@@ -55,7 +55,7 @@ export default async function FormsPage() {
       <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {forms.length ? (
           forms.map((form) => (
-            <Link key={form.id} href={`/app/forms/${form.id}`} className="rounded-3xl border border-black/8 bg-white p-6 transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_rgba(24,24,27,0.06)]">
+            <div key={form.id} className="rounded-3xl border border-black/8 bg-white p-6 transition hover:-translate-y-0.5 hover:shadow-[0_20px_40px_rgba(24,24,27,0.06)]">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">/{workspace.slug}/f/{form.slug}</p>
@@ -68,7 +68,21 @@ export default async function FormsPage() {
                 <span>{fieldCounts[form.id] ?? 0} fields</span>
                 <span>Updated {formatDate(form.updated_at)}</span>
               </div>
-            </Link>
+              <div className="mt-5 flex flex-wrap gap-3 text-sm">
+                <Link href={`/app/forms/${form.id}`} className="inline-flex rounded-xl bg-neutral-950 px-4 py-3 font-medium text-white">
+                  Open form
+                </Link>
+                <a href={`/app/forms/${form.id}/embed-snippet`} className="inline-flex rounded-xl border border-black/10 px-4 py-3 font-medium text-neutral-700">
+                  Download iframe snippet
+                </a>
+                <a href={`/app/forms/${form.id}/embed-snippet?mode=button`} className="inline-flex rounded-xl border border-black/10 px-4 py-3 font-medium text-neutral-700">
+                  Download button snippet
+                </a>
+                <Link href={`/w/${workspace.slug}/f/${form.slug}`} target="_blank" className="inline-flex rounded-xl border border-black/10 px-4 py-3 font-medium text-neutral-700">
+                  Open hosted form
+                </Link>
+              </div>
+            </div>
           ))
         ) : (
           <div className="rounded-3xl border border-black/8 bg-white p-8 text-sm text-neutral-600">No form templates have been created yet.</div>

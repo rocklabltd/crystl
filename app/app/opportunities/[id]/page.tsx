@@ -18,7 +18,7 @@ type ContactRecord = { id: string; first_name: string | null; last_name: string 
 type RequestRecord = { id: string; source: string; status: string; submitted_at: string; raw_payload_json: Record<string, unknown> };
 type StructuredRequirementRecord = { product_type: string | null; format: string | null; target_benefit: string | null; market: string | null; quantity_units: number | null; pack_size: string | null; packaging_type: string | null; formulation_support_needed: boolean | null; target_positioning: string | null; timeline: string | null; cleaned_summary: string | null; requirement_json: Record<string, unknown> | null };
 type SupplierRfqRecord = { id: string; supplier_name: string; supplier_contact_name: string | null; supplier_email: string | null; rfq_subject: string | null; status: string; sent_at: string | null; created_at: string };
-type SupplierResponseRecord = { id: string; supplier_rfq_id: string; moq: number | null; unit_price: number | null; currency: string; lead_time_days: number | null; response_notes: string | null; selected_for_quote: boolean; received_at: string | null };
+type SupplierResponseRecord = { id: string; supplier_rfq_id: string; moq: number | null; unit_price: number | null; currency: string; tooling_cost: number | null; formulation_cost: number | null; lead_time_days: number | null; response_notes: string | null; selected_for_quote: boolean; received_at: string | null };
 type QuoteRecord = { id: string; quote_number: string; version_number: number; title: string; currency: string; unit_price: number | null; moq: number | null; status: string; valid_until: string | null; sent_at: string | null };
 type ActivityRecord = { id: string; activity_type: string; activity_text: string; created_at: string };
 
@@ -69,6 +69,198 @@ function getFlashMessage(error ? : string, saved ? : string) {
   }
 }
 
+type NextActionCard = {
+  title: string;
+  description: string;
+  href: string;
+  cta: string;
+  checklist: string[];
+};
+
+function buildDefaultRfqSubject(opportunity: { ref_code: string; title: string }, requirement: StructuredRequirementRecord | null) {
+  if (requirement?.product_type) {
+    return `RFQ - ${requirement.product_type} - ${opportunity.ref_code}`;
+  }
+
+  return `RFQ - ${opportunity.title}`;
+}
+
+function buildDefaultRfqBody(
+  opportunity: { title: string },
+  requirement: StructuredRequirementRecord | null,
+  request: RequestRecord | null
+) {
+  return [
+    `Opportunity: ${opportunity.title}`,
+    requirement?.product_type ? `Product type: ${requirement.product_type}` : request?.raw_payload_json?.product_type ? `Product type: ${String(request.raw_payload_json.product_type)}` : null,
+    requirement?.target_benefit ? `Target benefit: ${requirement.target_benefit}` : request?.raw_payload_json?.product_goal ? `Target benefit: ${String(request.raw_payload_json.product_goal)}` : null,
+    requirement?.market ? `Market: ${requirement.market}` : null,
+    requirement?.quantity_units ? `Quantity: ${requirement.quantity_units}` : request?.raw_payload_json?.target_quantity ? `Quantity: ${String(request.raw_payload_json.target_quantity)}` : null,
+    requirement?.packaging_type ? `Packaging: ${requirement.packaging_type}` : null,
+    requirement?.timeline ? `Timeline: ${requirement.timeline}` : request?.raw_payload_json?.launch_timeline ? `Timeline: ${String(request.raw_payload_json.launch_timeline)}` : null,
+    requirement?.cleaned_summary ? `Summary: ${requirement.cleaned_summary}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatCurrency(currency: string, amount: number) {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function buildNextActionCard(
+  opportunityId: string,
+  stage: string,
+  requirement: StructuredRequirementRecord | null,
+  rfqs: SupplierRfqRecord[],
+  responses: SupplierResponseRecord[],
+  quotes: QuoteRecord[]
+): NextActionCard {
+  if (stage === "won") {
+    return {
+      title: "Deal won",
+      description: "This opportunity has been marked won. The next job is handoff and delivery follow-through.",
+      href: `/app/opportunities/${opportunityId}?tab=activity`,
+      cta: "Review activity",
+      checklist: [
+        "Confirm final commercial terms",
+        "Hand off the agreed quote internally",
+        "Track fulfilment and delivery milestones",
+      ],
+    };
+  }
+
+  if (stage === "lost") {
+    return {
+      title: "Deal lost",
+      description: "The opportunity is closed as lost. Capture what happened so the team learns from it later.",
+      href: `/app/opportunities/${opportunityId}?tab=activity`,
+      cta: "Review activity",
+      checklist: [
+        "Confirm the loss reason is recorded",
+        "Note any supplier or pricing issues",
+        "Use the lessons for future quotes",
+      ],
+    };
+  }
+
+  if (!requirement?.cleaned_summary) {
+    return {
+      title: "Clarify the brief",
+      description: "Turn the inbound enquiry into a usable requirement before anything goes to suppliers.",
+      href: `/app/opportunities/${opportunityId}?tab=requirement`,
+      cta: "Complete requirement",
+      checklist: [
+        "Confirm product type and target benefit",
+        "Set quantity, pack, and market details",
+        "Write a cleaned summary for suppliers",
+      ],
+    };
+  }
+
+  if (rfqs.length === 0) {
+    return {
+      title: "Send supplier RFQs",
+      description: "The brief is ready. Create and send supplier requests so pricing can start coming in.",
+      href: `/app/opportunities/${opportunityId}?tab=rfqs`,
+      cta: "Create RFQ",
+      checklist: [
+        "Choose supplier targets",
+        "Use the ready-made supplier message",
+        "Mark RFQs as sent once dispatched",
+      ],
+    };
+  }
+
+  if (responses.length === 0) {
+    return {
+      title: "Log supplier costs",
+      description: "RFQs are out. The next step is capturing supplier replies so pricing can be compared properly.",
+      href: `/app/opportunities/${opportunityId}?tab=responses`,
+      cta: "Log supplier response",
+      checklist: [
+        "Record MOQ and unit cost",
+        "Capture tooling and formulation costs",
+        "Mark the preferred supplier response",
+      ],
+    };
+  }
+
+  if (quotes.length === 0) {
+    return {
+      title: "Prepare the customer quote",
+      description: "You have supplier pricing. Now turn it into a customer-ready commercial quote.",
+      href: `/app/opportunities/${opportunityId}?tab=quotes`,
+      cta: "Create quote",
+      checklist: [
+        "Choose the preferred supplier response",
+        "Review suggested sell-price scenarios",
+        "Draft the customer quote",
+      ],
+    };
+  }
+
+  if (quotes[0]?.status !== "sent") {
+    return {
+      title: "Send the customer quote",
+      description: "A draft quote exists. Review it, finalise pricing, and mark it sent when it goes out.",
+      href: `/app/opportunities/${opportunityId}?tab=quotes`,
+      cta: "Open quotes",
+      checklist: [
+        "Sense-check margin against supplier cost",
+        "Confirm MOQ and lead time",
+        "Send the quote to the customer",
+      ],
+    };
+  }
+
+  return {
+    title: "Follow up the sent quote",
+    description: "The quote is out with the customer. Keep the deal moving by following up and resolving any objections.",
+    href: `/app/opportunities/${opportunityId}?tab=activity`,
+    cta: "Review activity",
+    checklist: [
+      "Schedule the next follow-up",
+      "Track customer questions or objections",
+      "Update the stage to won or lost when decided",
+    ],
+  };
+}
+
+function buildPricingGuidance(response: SupplierResponseRecord | null) {
+  if (!response?.unit_price) {
+    return null;
+  }
+
+  const responseMoq = Math.max(response.moq ?? 1, 1);
+  const toolingCost = response.tooling_cost ?? 0;
+  const formulationCost = response.formulation_cost ?? 0;
+  const oneTimePerUnit = (toolingCost + formulationCost) / responseMoq;
+  const landedUnitCost = response.unit_price + oneTimePerUnit;
+
+  return {
+    currency: response.currency,
+    responseMoq,
+    toolingCost,
+    formulationCost,
+    supplierUnitCost: response.unit_price,
+    landedUnitCost,
+    marginTargets: [35, 45, 55].map((marginPercent) => {
+      const sellPrice = landedUnitCost / (1 - marginPercent / 100);
+      return {
+        marginPercent,
+        sellPrice,
+        grossProfit: sellPrice - landedUnitCost,
+      };
+    }),
+  };
+}
+
+
 export default async function OpportunityDetailPage({ params, searchParams }: { params: Promise<PageParams>; searchParams: Promise<SearchParams> }) {
   const { workspace, membership } = await requireWorkspaceContext();
   const { id } = await params;
@@ -95,7 +287,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
   const quotes = (quotesResult.data ?? []) as QuoteRecord[];
   const activity = (activityResult.data ?? []) as ActivityRecord[];
   const rfqIds = rfqs.map((rfq) => rfq.id);
-  const responsesResult = rfqIds.length ? await supabase.from("supplier_responses").select("id, supplier_rfq_id, moq, unit_price, currency, lead_time_days, response_notes, selected_for_quote, received_at").in("supplier_rfq_id", rfqIds).order("received_at", { ascending: false }) : { data: [] as SupplierResponseRecord[] };
+  const responsesResult = rfqIds.length ? await supabase.from("supplier_responses").select("id, supplier_rfq_id, moq, unit_price, currency, tooling_cost, formulation_cost, lead_time_days, response_notes, selected_for_quote, received_at").in("supplier_rfq_id", rfqIds).order("received_at", { ascending: false }) : { data: [] as SupplierResponseRecord[] };
   const responses = (responsesResult.data ?? []) as SupplierResponseRecord[];
   const preferredResponse = responses.find((response) => response.selected_for_quote) ?? responses[0] ?? null;
   const rfqMap = new Map(rfqs.map((rfq) => [rfq.id, rfq]));
@@ -104,9 +296,11 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
   const createRfq = createSupplierRfqAction.bind(null, opportunity.id);
   const createResponse = createSupplierResponseAction.bind(null, opportunity.id);
   const createQuote = createCustomerQuoteAction.bind(null, opportunity.id);
-  const defaultRfqSubject = requirement?.product_type ? `RFQ - ${requirement.product_type} ? ${opportunity.ref_code}` : `RFQ - ${opportunity.title}`;
-  const defaultRfqBody = [`Opportunity: ${opportunity.title}`, requirement?.product_type ? `Product type: ${requirement.product_type}` : null, requirement?.target_benefit ? `Target benefit: ${requirement.target_benefit}` : null, requirement?.market ? `Market: ${requirement.market}` : null, requirement?.quantity_units ? `Quantity: ${requirement.quantity_units}` : null, requirement?.cleaned_summary ? `Summary: ${requirement.cleaned_summary}` : null].filter(Boolean).join("\n");
+  const defaultRfqSubject = buildDefaultRfqSubject(opportunity, requirement);
+  const defaultRfqBody = buildDefaultRfqBody(opportunity, requirement, request);
   const defaultQuoteItems = ["Custom formulation support", requirement?.product_type ? `${requirement.product_type} manufacturing` : null, requirement?.packaging_type ? `${requirement.packaging_type} packaging` : null].filter(Boolean).join("\n");
+  const nextAction = buildNextActionCard(opportunity.id, opportunity.stage, requirement, rfqs, responses, quotes);
+  const pricingGuidance = buildPricingGuidance(preferredResponse);
 
   return (
     <div>
@@ -127,6 +321,88 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
           <div><p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Last updated</p><p className="mt-1 font-medium text-neutral-950">{formatDate(opportunity.updated_at)}</p><p className="mt-1">Created {formatDate(opportunity.created_at)}</p></div>
         </div>
       </div>
+      <section className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-3xl border border-black/8 bg-[#f7f4ec] p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-neutral-500">
+            What Happens Next
+          </p>
+          <h2 className="mt-3 text-2xl font-semibold text-neutral-950">{nextAction.title}</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-neutral-700">{nextAction.description}</p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Link href={nextAction.href} className="inline-flex rounded-xl bg-neutral-950 px-4 py-3 text-sm font-medium text-white">
+              {nextAction.cta}
+            </Link>
+            <Link href={`/app/opportunities/${opportunity.id}?tab=activity`} className="inline-flex rounded-xl border border-black/10 bg-white px-4 py-3 text-sm font-medium text-neutral-700">
+              Review activity
+            </Link>
+          </div>
+          <div className="mt-6 grid gap-3 md:grid-cols-3">
+            {nextAction.checklist.map((item) => (
+              <div key={item} className="rounded-2xl border border-black/8 bg-white px-4 py-4 text-sm text-neutral-700">
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-black/8 bg-white p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-neutral-500">
+            Pricing Snapshot
+          </p>
+          <h2 className="mt-3 text-xl font-semibold text-neutral-950">Suggested sell-price view</h2>
+          {pricingGuidance ? (
+            <div className="mt-5 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-[#faf7f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Supplier unit cost</p>
+                  <p className="mt-2 text-lg font-semibold text-neutral-950">{formatCurrency(pricingGuidance.currency, pricingGuidance.supplierUnitCost)}</p>
+                </div>
+                <div className="rounded-2xl bg-[#faf7f2] p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Landed unit cost</p>
+                  <p className="mt-2 text-lg font-semibold text-neutral-950">{formatCurrency(pricingGuidance.currency, pricingGuidance.landedUnitCost)}</p>
+                </div>
+              </div>
+              <div className="grid gap-3 text-sm text-neutral-700 sm:grid-cols-3">
+                <div className="rounded-2xl border border-black/8 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">MOQ basis</p>
+                  <p className="mt-2 font-medium text-neutral-950">{pricingGuidance.responseMoq}</p>
+                </div>
+                <div className="rounded-2xl border border-black/8 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Tooling cost</p>
+                  <p className="mt-2 font-medium text-neutral-950">{formatCurrency(pricingGuidance.currency, pricingGuidance.toolingCost)}</p>
+                </div>
+                <div className="rounded-2xl border border-black/8 p-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Formulation cost</p>
+                  <p className="mt-2 font-medium text-neutral-950">{formatCurrency(pricingGuidance.currency, pricingGuidance.formulationCost)}</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {pricingGuidance.marginTargets.map((scenario) => (
+                  <div key={scenario.marginPercent} className="rounded-2xl border border-black/8 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Target margin {scenario.marginPercent}%</p>
+                        <p className="mt-2 text-lg font-semibold text-neutral-950">{formatCurrency(pricingGuidance.currency, scenario.sellPrice)}</p>
+                      </div>
+                      <div className="text-sm text-neutral-600">
+                        Gross profit per unit: {formatCurrency(pricingGuidance.currency, scenario.grossProfit)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-sm leading-6 text-neutral-600">
+                This gives the team a fast commercial starting point based on the preferred supplier cost plus tooling and formulation spread over MOQ.
+              </p>
+            </div>
+          ) : (
+            <p className="mt-5 text-sm leading-6 text-neutral-600">
+              Log a supplier response and mark one as preferred to unlock suggested sell-price scenarios here.
+            </p>
+          )}
+        </div>
+      </section>
+
       <section className="mt-6 rounded-3xl border border-black/8 bg-white p-6">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
@@ -143,7 +419,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
         </form>
       </section>
       <nav className="mt-6 flex flex-wrap gap-2">
-        {tabs.map((tab) => <Link key={tab.id} href={`/app/opportunities/${opportunity.id} ? tab=${tab.id}`} className={["rounded-full px-4 py-2 text-sm transition", activeTab === tab.id ? "bg-neutral-950 text-white" : "border border-black/10 bg-white text-neutral-700 hover:bg-neutral-50"].join(" ")}>{tab.label}</Link>)}
+        {tabs.map((tab) => <Link key={tab.id} href={`/app/opportunities/${opportunity.id}?tab=${tab.id}`} className={["rounded-full px-4 py-2 text-sm transition", activeTab === tab.id ? "bg-neutral-950 text-white" : "border border-black/10 bg-white text-neutral-700 hover:bg-neutral-50"].join(" ")}>{tab.label}</Link>)}
       </nav>
       {flashMessage ? <p className={["mt-6 rounded-2xl px-4 py-3 text-sm", flashMessage.tone === "success" ? "border border-green-200 bg-green-50 text-green-800" : "border border-red-200 bg-red-50 text-red-700"].join(" ")}>{flashMessage.text}</p> : null}
       {activeTab === "overview" ? (
@@ -159,6 +435,32 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
               </div>
               <p className="mt-5 rounded-2xl bg-[#faf7f2] p-4 text-sm leading-6 text-neutral-700">{requirement?.cleaned_summary || "No cleaned summary has been added yet. Use the structured requirement tab to turn the raw request into a quotable brief."}</p>
             </div>
+            <div className="rounded-3xl border border-black/8 bg-white p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-semibold text-neutral-950">Supplier-ready message</h2>
+                  <p className="mt-2 text-sm text-neutral-600">
+                    The team can copy this straight into an RFQ email instead of writing from scratch every time.
+                  </p>
+                </div>
+                <Link href={`/app/opportunities/${opportunity.id}?tab=rfqs`} className="text-sm text-neutral-600 underline underline-offset-4">
+                  Open RFQs
+                </Link>
+              </div>
+              <div className="mt-5 grid gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Suggested subject</p>
+                  <div className="mt-2 rounded-2xl bg-[#faf7f2] p-4 text-sm text-neutral-800">{defaultRfqSubject}</div>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">Suggested message</p>
+                  <pre className="mt-2 whitespace-pre-wrap rounded-2xl bg-[#faf7f2] p-4 font-sans text-sm leading-6 text-neutral-800">
+                    {defaultRfqBody || "Complete the structured requirement to generate a better supplier brief."}
+                  </pre>
+                </div>
+              </div>
+            </div>
+
             <div className="rounded-3xl border border-black/8 bg-white p-6">
               <h2 className="text-xl font-semibold text-neutral-950">Contact card</h2>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
