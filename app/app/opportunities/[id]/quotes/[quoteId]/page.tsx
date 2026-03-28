@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import { createQuoteRevisionAction, updateCustomerQuoteAction } from "../../actions";
 
@@ -33,7 +33,7 @@ export default async function CustomerQuoteEditPage({ params, searchParams }: { 
   const { workspace } = await requireWorkspaceContext();
   const { id, quoteId } = await params;
   const resolvedSearchParams = await searchParams;
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: quote, error } = await supabase
     .from("customer_quotes")

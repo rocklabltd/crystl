@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 const STAGES = [
   "new",
@@ -21,7 +21,7 @@ function stageLabel(stage: string) {
 
 export default async function DashboardPage() {
   const { workspace } = await requireWorkspaceContext();
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const [{ data: opportunities }, { data: activities }, { data: requests }] = await Promise.all([
     supabase

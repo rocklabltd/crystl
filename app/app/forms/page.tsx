@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type FormRecord = {
   id: string;
@@ -22,7 +22,7 @@ function formatDate(value: string) {
 
 export default async function FormsPage() {
   const { workspace, membership } = await requireWorkspaceContext();
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: formRows } = await supabase
     .from("form_templates")

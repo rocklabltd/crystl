@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type ContactRecord = {
   id: string;
@@ -42,7 +42,7 @@ function formatDate(value: string) {
 export default async function ContactsPage({ searchParams }: { searchParams: Promise<{ contact?: string }> }) {
   const { workspace } = await requireWorkspaceContext();
   const resolvedSearchParams = await searchParams;
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: contacts } = await supabase
     .from("contacts")

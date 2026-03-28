@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import { updateSupplierResponseAction } from "../../actions";
 
@@ -27,7 +27,7 @@ export default async function SupplierResponseEditPage({ params, searchParams }:
   const { workspace, default_currency } = await requireWorkspaceContext().then((context) => ({ workspace: context.workspace, default_currency: context.workspace.default_currency }));
   const { id, responseId } = await params;
   const resolvedSearchParams = await searchParams;
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: response, error } = await supabase
     .from("supplier_responses")

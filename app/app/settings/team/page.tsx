@@ -1,5 +1,5 @@
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import { updateWorkspaceMemberRoleAction } from "./actions";
 
@@ -38,7 +38,7 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams:
   const { workspace, membership, user } = await requireWorkspaceContext();
   const resolvedSearchParams = await searchParams;
   const message = flashMessage(resolvedSearchParams.error, resolvedSearchParams.saved);
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: memberRows } = await supabase
     .from("workspace_members")

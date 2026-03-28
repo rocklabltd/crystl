@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import { duplicateSupplierRfqAction, updateSupplierRfqAction } from "../../actions";
 
@@ -25,7 +25,7 @@ export default async function SupplierRfqEditPage({ params, searchParams }: { pa
   const { workspace } = await requireWorkspaceContext();
   const { id, rfqId } = await params;
   const resolvedSearchParams = await searchParams;
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: rfq, error } = await supabase
     .from("supplier_rfqs")

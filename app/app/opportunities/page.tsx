@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type SearchParams = {
   stage?: string;
@@ -45,7 +45,7 @@ export default async function OpportunitiesPage({
 }) {
   const { workspace } = await requireWorkspaceContext();
   const resolvedSearchParams = await searchParams;
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: opportunities } = await supabase
     .from("opportunities")

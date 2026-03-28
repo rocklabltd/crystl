@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type RequestRecord = {
   id: string;
@@ -49,7 +49,7 @@ function contactName(contact?: ContactRecord) {
 
 export default async function RequestsPage() {
   const { workspace } = await requireWorkspaceContext();
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: requestRows } = await supabase
     .from("requests")

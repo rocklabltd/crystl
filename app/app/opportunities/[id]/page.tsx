@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import {
   createCustomerQuoteAction,
@@ -13,7 +13,7 @@ import {
 } from "./actions";
 
 type PageParams = { id: string };
-type SearchParams = { tab?: string; saved?: string; error?: string };
+type SearchParams = { tab ? : string; saved ? : string; error ? : string };
 type ContactRecord = { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; company_name: string | null; country: string | null };
 type RequestRecord = { id: string; source: string; status: string; submitted_at: string; raw_payload_json: Record<string, unknown> };
 type StructuredRequirementRecord = { product_type: string | null; format: string | null; target_benefit: string | null; market: string | null; quantity_units: number | null; pack_size: string | null; packaging_type: string | null; formulation_support_needed: boolean | null; target_positioning: string | null; timeline: string | null; cleaned_summary: string | null; requirement_json: Record<string, unknown> | null };
@@ -47,16 +47,16 @@ const stages = [
 const priorities = ["low", "normal", "high", "urgent"] as const;
 
 function humanize(value: string) { return value.replaceAll("_", " "); }
-function formatDate(value?: string | null) {
+function formatDate(value ? : string | null) {
   if (!value) return "Not set";
   return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
-function contactName(contact?: ContactRecord | null) {
+function contactName(contact ? : ContactRecord | null) {
   if (!contact) return "No contact linked";
   const fullName = [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim();
   return fullName || contact.company_name || "Unnamed contact";
 }
-function getFlashMessage(error?: string, saved?: string) {
+function getFlashMessage(error ? : string, saved ? : string) {
   const successMap: Record<string, string> = { workflow: "Opportunity workflow updated.", requirement: "Structured requirement saved.", rfq: "Supplier RFQ created.", rfq_updated: "Supplier RFQ updated.", rfq_duplicated: "Supplier RFQ duplicated as a draft.", response: "Supplier response logged.", response_updated: "Supplier response updated.", quote: "Customer quote created.", quote_updated: "Customer quote updated.", quote_revision: "Quote revision created as a draft." };
   if (saved && successMap[saved]) return { tone: "success", text: successMap[saved] };
   switch (error) {
@@ -75,7 +75,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
   const resolvedSearchParams = await searchParams;
   const activeTab = tabs.some((tab) => tab.id === resolvedSearchParams.tab) ? resolvedSearchParams.tab! : "overview";
   const flashMessage = getFlashMessage(resolvedSearchParams.error, resolvedSearchParams.saved);
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
   const { data: opportunity, error: opportunityError } = await supabase.from("opportunities").select("*").eq("id", id).eq("workspace_id", workspace.id).single();
   if (opportunityError || !opportunity) notFound();
 
@@ -104,7 +104,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
   const createRfq = createSupplierRfqAction.bind(null, opportunity.id);
   const createResponse = createSupplierResponseAction.bind(null, opportunity.id);
   const createQuote = createCustomerQuoteAction.bind(null, opportunity.id);
-  const defaultRfqSubject = requirement?.product_type ? `RFQ - ${requirement.product_type} - ${opportunity.ref_code}` : `RFQ - ${opportunity.title}`;
+  const defaultRfqSubject = requirement?.product_type ? `RFQ - ${requirement.product_type} ? ${opportunity.ref_code}` : `RFQ - ${opportunity.title}`;
   const defaultRfqBody = [`Opportunity: ${opportunity.title}`, requirement?.product_type ? `Product type: ${requirement.product_type}` : null, requirement?.target_benefit ? `Target benefit: ${requirement.target_benefit}` : null, requirement?.market ? `Market: ${requirement.market}` : null, requirement?.quantity_units ? `Quantity: ${requirement.quantity_units}` : null, requirement?.cleaned_summary ? `Summary: ${requirement.cleaned_summary}` : null].filter(Boolean).join("\n");
   const defaultQuoteItems = ["Custom formulation support", requirement?.product_type ? `${requirement.product_type} manufacturing` : null, requirement?.packaging_type ? `${requirement.packaging_type} packaging` : null].filter(Boolean).join("\n");
 
@@ -143,7 +143,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
         </form>
       </section>
       <nav className="mt-6 flex flex-wrap gap-2">
-        {tabs.map((tab) => <Link key={tab.id} href={`/app/opportunities/${opportunity.id}?tab=${tab.id}`} className={["rounded-full px-4 py-2 text-sm transition", activeTab === tab.id ? "bg-neutral-950 text-white" : "border border-black/10 bg-white text-neutral-700 hover:bg-neutral-50"].join(" ")}>{tab.label}</Link>)}
+        {tabs.map((tab) => <Link key={tab.id} href={`/app/opportunities/${opportunity.id} ? tab=${tab.id}`} className={["rounded-full px-4 py-2 text-sm transition", activeTab === tab.id ? "bg-neutral-950 text-white" : "border border-black/10 bg-white text-neutral-700 hover:bg-neutral-50"].join(" ")}>{tab.label}</Link>)}
       </nav>
       {flashMessage ? <p className={["mt-6 rounded-2xl px-4 py-3 text-sm", flashMessage.tone === "success" ? "border border-green-200 bg-green-50 text-green-800" : "border border-red-200 bg-red-50 text-red-700"].join(" ")}>{flashMessage.text}</p> : null}
       {activeTab === "overview" ? (
@@ -280,7 +280,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
         </section>
       ) : null}
       {activeTab === "activity" ? (
-        <section className="mt-6 rounded-3xl border border-black/8 bg-white p-6"><div className="space-y-4">{activity.length ? activity.map((entry) => <div key={entry.id} className="border-l-2 border-neutral-200 pl-4"><p className="text-sm font-medium text-neutral-900">{entry.activity_text}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-neutral-500">{humanize(entry.activity_type)} • {formatDate(entry.created_at)}</p></div>) : <p className="text-sm text-neutral-600">No activity logged for this opportunity yet.</p>}</div></section>
+        <section className="mt-6 rounded-3xl border border-black/8 bg-white p-6"><div className="space-y-4">{activity.length ? activity.map((entry) => <div key={entry.id} className="border-l-2 border-neutral-200 pl-4"><p className="text-sm font-medium text-neutral-900">{entry.activity_text}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-neutral-500">{humanize(entry.activity_type)} â€¢ {formatDate(entry.created_at)}</p></div>) : <p className="text-sm text-neutral-600">No activity logged for this opportunity yet.</p>}</div></section>
       ) : null}
     </div>
   );

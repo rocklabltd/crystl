@@ -6,7 +6,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseActionClient } from "@/lib/supabase/server";
 import { authSchema, type AuthFormState } from "@/lib/validators/auth";
 
-async function maybeAssignDefaultWorkspaceOwner(userId: string) {
+async function ensureDefaultWorkspaceMembership(userId: string) {
   const workspaceSlug = process.env.NEXT_PUBLIC_DEFAULT_WORKSPACE_SLUG;
   if (!workspaceSlug) {
     return false;
@@ -24,6 +24,22 @@ async function maybeAssignDefaultWorkspaceOwner(userId: string) {
     return false;
   }
 
+  const { data: existingMembership, error: existingMembershipError } = await admin
+    .from("workspace_members")
+    .select("id")
+    .eq("workspace_id", workspace.id)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (existingMembershipError) {
+    console.error("Workspace membership lookup error:", existingMembershipError);
+    return false;
+  }
+
+  if (existingMembership) {
+    return true;
+  }
+
   const { count, error: countError } = await admin
     .from("workspace_members")
     .select("id", { count: "exact", head: true })
@@ -34,18 +50,49 @@ async function maybeAssignDefaultWorkspaceOwner(userId: string) {
     return false;
   }
 
-  if ((count ?? 0) > 0) {
-    return false;
-  }
-
+  const role = (count ?? 0) > 0 ? "sales" : "owner";
   const { error: insertError } = await admin.from("workspace_members").insert({
     workspace_id: workspace.id,
     user_id: userId,
-    role: "owner",
+    role,
   });
 
   if (insertError) {
     console.error("Workspace bootstrap insert error:", insertError);
+    return false;
+  }
+
+  return true;
+}
+
+function isLocalAppEnv() {
+  return (process.env.APP_ENV || "").toLowerCase() === "local";
+}
+
+async function autoConfirmLocalUserByEmail(email: string) {
+  if (!isLocalAppEnv()) {
+    return false;
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin.auth.admin.listUsers();
+
+  if (error) {
+    console.error("Local auth user lookup error:", error);
+    return false;
+  }
+
+  const targetUser = data.users.find((user) => user.email?.toLowerCase() === email.toLowerCase());
+  if (!targetUser?.id) {
+    return false;
+  }
+
+  const { error: confirmError } = await admin.auth.admin.updateUserById(targetUser.id, {
+    email_confirm: true,
+  });
+
+  if (confirmError) {
+    console.error("Local auth confirm error:", confirmError);
     return false;
   }
 
@@ -72,13 +119,26 @@ export async function loginAction(
 
   const { email, password } = validatedFields.data;
   const supabase = await createSupabaseActionClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  let signInResult = await supabase.auth.signInWithPassword({ email, password });
 
-  if (error) {
+  if (signInResult.error && signInResult.error.message.toLowerCase().includes("email not confirmed")) {
+    const confirmed = await autoConfirmLocalUserByEmail(email);
+    if (confirmed) {
+      signInResult = await supabase.auth.signInWithPassword({ email, password });
+    }
+  }
+
+  if (signInResult.error) {
     return {
-      message: "We could not sign you in with those details.",
+      message: signInResult.error.message.toLowerCase().includes("email not confirmed")
+        ? "This account still needs email confirmation. In local mode, try signing in one more time."
+        : "We could not sign you in with those details.",
       values: { email },
     };
+  }
+
+  if (isLocalAppEnv() && signInResult.data.user?.id) {
+    await ensureDefaultWorkspaceMembership(signInResult.data.user.id);
   }
 
   redirect("/app/dashboard");
@@ -123,16 +183,36 @@ export async function signupAction(
     };
   }
 
-  if (data.user?.id) {
-    await maybeAssignDefaultWorkspaceOwner(data.user.id);
+  if (data.user?.id && isLocalAppEnv()) {
+    await ensureDefaultWorkspaceMembership(data.user.id);
+  }
+
+  if (!data.session && isLocalAppEnv()) {
+    const confirmed = await autoConfirmLocalUserByEmail(email);
+
+    if (confirmed) {
+      const signInResult = await supabase.auth.signInWithPassword({ email, password });
+
+      if (!signInResult.error) {
+        if (signInResult.data.user?.id) {
+          await ensureDefaultWorkspaceMembership(signInResult.data.user.id);
+        }
+        redirect("/app/dashboard");
+      }
+    }
   }
 
   if (data.session) {
+    if (data.user?.id && isLocalAppEnv()) {
+      await ensureDefaultWorkspaceMembership(data.user.id);
+    }
     redirect("/app/dashboard");
   }
 
   return {
-    message: "Account created. You can now sign in.",
+    message: isLocalAppEnv()
+      ? "Account created, but we could not start the session automatically. Try signing in now."
+      : "Account created. Check your email to confirm the account before signing in.",
     values: { email },
   };
 }

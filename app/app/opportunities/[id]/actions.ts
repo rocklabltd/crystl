@@ -36,6 +36,43 @@ function toLineText(value?: unknown) {
   return value.map((item) => String(item)).join("\n");
 }
 
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_FILE_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/plain",
+]);
+
+function normalizeFileName(fileName: string) {
+  const lastDotIndex = fileName.lastIndexOf(".");
+  const baseName = lastDotIndex >= 0 ? fileName.slice(0, lastDotIndex) : fileName;
+  const extension = lastDotIndex >= 0 ? fileName.slice(lastDotIndex).toLowerCase() : "";
+  const safeBaseName = baseName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
+  return `${safeBaseName || "file"}${extension}`;
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 async function requireEditableOpportunity(opportunityId: string) {
   const context = await requireWorkspaceContext();
 
@@ -46,7 +83,7 @@ async function requireEditableOpportunity(opportunityId: string) {
   const supabase = await createSupabaseActionClient();
   const { data: opportunity, error } = await supabase
     .from("opportunities")
-    .select("id, title, stage, priority, outcome_reason")
+    .select("id, request_id, title, stage, priority, outcome_reason")
     .eq("id", opportunityId)
     .eq("workspace_id", context.workspace.id)
     .single();
@@ -748,3 +785,111 @@ export async function getEditableQuoteDefaults(opportunityId: string, quoteId: s
     assumptions_text: toLineText(quote.assumptions_json),
   };
 }
+
+export async function uploadOpportunityFileAction(opportunityId: string, formData: FormData) {
+  const { workspace, user, supabase, opportunity } = await requireEditableOpportunity(opportunityId);
+  const fileEntry = formData.get("file");
+
+  if (!(fileEntry instanceof File) || fileEntry.size === 0) {
+    redirect(`/app/opportunities/${opportunityId}?error=file`);
+  }
+
+  if (fileEntry.size > MAX_FILE_SIZE_BYTES) {
+    redirect(`/app/opportunities/${opportunityId}?error=file_size`);
+  }
+
+  if (!ALLOWED_FILE_TYPES.has(fileEntry.type)) {
+    redirect(`/app/opportunities/${opportunityId}?error=file_type`);
+  }
+
+  const normalizedName = normalizeFileName(fileEntry.name);
+  const storagePath = `${workspace.id}/${opportunityId}/${Date.now()}-${normalizedName}`;
+  const fileBuffer = Buffer.from(await fileEntry.arrayBuffer());
+
+  const { error: uploadError } = await supabase.storage
+    .from("workspace-files")
+    .upload(storagePath, fileBuffer, {
+      contentType: fileEntry.type,
+      upsert: false,
+    });
+
+  if (uploadError) {
+    console.error("Opportunity file upload error:", uploadError);
+    redirect(`/app/opportunities/${opportunityId}?error=save`);
+  }
+
+  const { error: fileInsertError } = await supabase.from("files").insert({
+    workspace_id: workspace.id,
+    opportunity_id: opportunityId,
+    request_id: opportunity.request_id,
+    storage_path: storagePath,
+    file_name: fileEntry.name,
+    mime_type: fileEntry.type,
+    file_size: fileEntry.size,
+    uploaded_by_user_id: user.id,
+  });
+
+  if (fileInsertError) {
+    console.error("Opportunity file record insert error:", fileInsertError);
+    await supabase.storage.from("workspace-files").remove([storagePath]);
+    redirect(`/app/opportunities/${opportunityId}?error=save`);
+  }
+
+  await supabase.from("activity_logs").insert({
+    workspace_id: workspace.id,
+    opportunity_id: opportunityId,
+    user_id: user.id,
+    activity_type: "opportunity_file_uploaded",
+    activity_text: `File uploaded: ${fileEntry.name} (${formatFileSize(fileEntry.size)})`,
+    metadata_json: { storage_path: storagePath, file_name: fileEntry.name },
+  });
+
+  redirect(`/app/opportunities/${opportunityId}?saved=file`);
+}
+
+export async function deleteOpportunityFileAction(opportunityId: string, fileId: string) {
+  const { workspace, user, supabase } = await requireEditableOpportunity(opportunityId);
+  const { data: fileRecord, error } = await supabase
+    .from("files")
+    .select("id, storage_path, file_name")
+    .eq("id", fileId)
+    .eq("workspace_id", workspace.id)
+    .eq("opportunity_id", opportunityId)
+    .single();
+
+  if (error || !fileRecord) {
+    redirect(`/app/opportunities/${opportunityId}?error=file_delete`);
+  }
+
+  const { error: removeError } = await supabase.storage
+    .from("workspace-files")
+    .remove([fileRecord.storage_path]);
+
+  if (removeError) {
+    console.error("Opportunity file storage delete error:", removeError);
+    redirect(`/app/opportunities/${opportunityId}?error=file_delete`);
+  }
+
+  const { error: deleteError } = await supabase
+    .from("files")
+    .delete()
+    .eq("id", fileId)
+    .eq("workspace_id", workspace.id);
+
+  if (deleteError) {
+    console.error("Opportunity file record delete error:", deleteError);
+    redirect(`/app/opportunities/${opportunityId}?error=file_delete`);
+  }
+
+  await supabase.from("activity_logs").insert({
+    workspace_id: workspace.id,
+    opportunity_id: opportunityId,
+    user_id: user.id,
+    activity_type: "opportunity_file_deleted",
+    activity_text: `File deleted: ${fileRecord.file_name}`,
+    metadata_json: { file_id: fileId, storage_path: fileRecord.storage_path },
+  });
+
+  redirect(`/app/opportunities/${opportunityId}?saved=file_deleted`);
+}
+

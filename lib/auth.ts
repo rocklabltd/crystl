@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
 
 type WorkspaceRecord = {
@@ -19,7 +20,6 @@ type WorkspaceRecord = {
 type WorkspaceMembershipRecord = {
   workspace_id: string;
   role: string;
-  workspaces: WorkspaceRecord | WorkspaceRecord[] | null;
 };
 
 export const getAuthenticatedUser = cache(async () => {
@@ -48,38 +48,53 @@ export const getCurrentWorkspaceContext = cache(async () => {
     return null;
   }
 
-  const supabase = await createSupabaseServerComponentClient();
-  const { data, error } = await supabase
+  const admin = createSupabaseAdminClient();
+  const { data: membershipRows, error: membershipError } = await admin
     .from("workspace_members")
-    .select(
-      "workspace_id, role, workspaces(id, name, slug, brand_name, primary_colour, logo_url, quote_prefix, default_currency)"
-    )
+    .select("workspace_id, role")
     .eq("user_id", user.id)
     .order("created_at", { ascending: true });
 
-  if (error) {
-    console.error("Workspace membership query error:", error);
-    return null;
+  if (membershipError) {
+    console.error("Workspace membership query error:", {
+      message: membershipError.message,
+      code: membershipError.code,
+      details: membershipError.details,
+      hint: membershipError.hint,
+    });
+    return { user, membership: null, workspace: null };
   }
 
-  const memberships = (data ?? []) as WorkspaceMembershipRecord[];
+  const memberships = (membershipRows ?? []) as WorkspaceMembershipRecord[];
   if (memberships.length === 0) {
     return { user, membership: null, workspace: null };
   }
 
+  const workspaceIds = memberships.map((membership) => membership.workspace_id);
+  const { data: workspaceRows, error: workspaceError } = await admin
+    .from("workspaces")
+    .select("id, name, slug, brand_name, primary_colour, logo_url, quote_prefix, default_currency")
+    .in("id", workspaceIds);
+
+  if (workspaceError) {
+    console.error("Workspace lookup error:", {
+      message: workspaceError.message,
+      code: workspaceError.code,
+      details: workspaceError.details,
+      hint: workspaceError.hint,
+    });
+    return { user, membership: null, workspace: null };
+  }
+
+  const workspaceMap = new Map(((workspaceRows ?? []) as WorkspaceRecord[]).map((workspace) => [workspace.id, workspace]));
   const preferredWorkspaceSlug = process.env.NEXT_PUBLIC_DEFAULT_WORKSPACE_SLUG;
   const membership =
     memberships.find((entry) => {
-      const workspace = Array.isArray(entry.workspaces)
-        ? entry.workspaces[0]
-        : entry.workspaces;
-
+      const workspace = workspaceMap.get(entry.workspace_id);
       return workspace?.slug === preferredWorkspaceSlug;
     }) ?? memberships[0];
 
-  const workspace = Array.isArray(membership.workspaces)
-    ? membership.workspaces[0] ?? null
-    : membership.workspaces;
+  const workspace = workspaceMap.get(membership.workspace_id) ?? null;
 
   return {
     user,

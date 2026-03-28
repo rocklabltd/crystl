@@ -2,11 +2,7 @@
 
 import { useActionState, useState } from "react";
 
-import {
-  initialPublicFormState,
-  type PublicFormField,
-  type PublicFormState,
-} from "./actions";
+import { initialPublicFormState, type PublicFormField, type PublicFormState } from "./form-state";
 
 type PublicFormProps = {
   action: (state: PublicFormState, formData: FormData) => Promise<PublicFormState>;
@@ -278,7 +274,7 @@ function PublicFormFields({
   }
 
   return (
-    <form action={formAction} className="mt-6 space-y-4">
+    <form action={formAction} className="mt-6 space-y-4" encType="multipart/form-data">
       {state.message ? (
         <p className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" aria-live="polite">
           {state.message}
@@ -295,6 +291,22 @@ function PublicFormFields({
           </div>
         ) : null
       )}
+
+      <div>
+        <label htmlFor="attachment" className="block text-sm font-medium">
+          Attachment
+        </label>
+        <input
+          id="attachment"
+          name="attachment"
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xlsx,.txt"
+          className="mt-1 w-full rounded border px-3 py-2"
+        />
+        <p className="mt-1 text-xs text-gray-500">
+          Optional. PDF, image, Word, Excel, or text file up to 10 MB.
+        </p>
+      </div>
 
       <p className="text-sm text-gray-500">
         {introText

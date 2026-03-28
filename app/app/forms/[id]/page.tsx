@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { requireWorkspaceContext } from "@/lib/auth";
-import { createSupabaseServerComponentClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 import { updateFormFieldAction, updateFormTemplateBasicsAction } from "./actions";
 
@@ -34,7 +34,7 @@ export default async function FormDetailPage({ params, searchParams }: { params:
   const { id } = await params;
   const resolvedSearchParams = await searchParams;
   const message = flashMessage(resolvedSearchParams.error, resolvedSearchParams.saved);
-  const supabase = await createSupabaseServerComponentClient();
+  const supabase = createSupabaseAdminClient();
 
   const { data: form, error } = await supabase
     .from("form_templates")

@@ -2,7 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 import { PublicForm } from "./PublicForm";
-import { submitPublicForm, type PublicFormField } from "./actions";
+import { submitPublicForm } from "./actions";
+import type { PublicFormField } from "./form-state";
 
 type PageParams = {
   workspaceSlug: string;
