@@ -73,6 +73,51 @@ function formatFileSize(size: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const opportunityStageOrder = [
+  "new",
+  "reviewing",
+  "awaiting_info",
+  "sent_for_pricing",
+  "supplier_response_received",
+  "quote_ready",
+  "quote_sent",
+  "won",
+  "lost",
+] as const;
+
+async function advanceOpportunityStage(
+  supabase: Awaited<ReturnType<typeof createSupabaseActionClient>>,
+  opportunity: { id: string; stage: string },
+  nextStage: (typeof opportunityStageOrder)[number]
+) {
+  if (opportunity.stage === "won" || opportunity.stage === "lost") {
+    return opportunity.stage;
+  }
+
+  const currentIndex = opportunityStageOrder.indexOf(opportunity.stage as (typeof opportunityStageOrder)[number]);
+  const nextIndex = opportunityStageOrder.indexOf(nextStage);
+
+  if (currentIndex >= nextIndex) {
+    return opportunity.stage;
+  }
+
+  const { error } = await supabase
+    .from("opportunities")
+    .update({
+      stage: nextStage,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", opportunity.id);
+
+  if (error) {
+    console.error("Opportunity stage advance error:", error);
+    return opportunity.stage;
+  }
+
+  opportunity.stage = nextStage;
+  return nextStage;
+}
+
 async function requireEditableOpportunity(opportunityId: string) {
   const context = await requireWorkspaceContext();
 
@@ -322,7 +367,9 @@ export async function saveStructuredRequirementAction(opportunityId: string, for
 }
 
 export async function createSupplierRfqAction(opportunityId: string, formData: FormData) {
-  const { workspace, user, supabase } = await requireEditableOpportunity(opportunityId);
+  const { workspace, user, supabase, opportunity } = await requireEditableOpportunity(opportunityId);
+  const submitIntent = String(formData.get("submit_intent") ?? "draft");
+  const nextStatus = submitIntent === "sent" ? "sent" : "draft";
 
   const parsed = supplierRfqSchema.safeParse({
     supplier_name: formData.get("supplier_name"),
@@ -330,7 +377,7 @@ export async function createSupplierRfqAction(opportunityId: string, formData: F
     supplier_email: String(formData.get("supplier_email") ?? "").trim(),
     rfq_subject: formData.get("rfq_subject"),
     rfq_body: formData.get("rfq_body"),
-    status: formData.get("status"),
+    status: nextStatus,
   });
 
   if (!parsed.success) {
@@ -338,19 +385,23 @@ export async function createSupplierRfqAction(opportunityId: string, formData: F
   }
 
   const sentAt = parsed.data.status === "sent" ? new Date().toISOString() : null;
-  const { error } = await supabase.from("supplier_rfqs").insert({
-    opportunity_id: opportunityId,
-    supplier_name: parsed.data.supplier_name,
-    supplier_contact_name: parsed.data.supplier_contact_name || null,
-    supplier_email: parsed.data.supplier_email || null,
-    rfq_subject: parsed.data.rfq_subject || null,
-    rfq_body: parsed.data.rfq_body || null,
-    status: parsed.data.status,
-    sent_at: sentAt,
-    created_by_user_id: user.id,
-  });
+  const { data: createdRfq, error } = await supabase
+    .from("supplier_rfqs")
+    .insert({
+      opportunity_id: opportunityId,
+      supplier_name: parsed.data.supplier_name,
+      supplier_contact_name: parsed.data.supplier_contact_name || null,
+      supplier_email: parsed.data.supplier_email || null,
+      rfq_subject: parsed.data.rfq_subject || null,
+      rfq_body: parsed.data.rfq_body || null,
+      status: parsed.data.status,
+      sent_at: sentAt,
+      created_by_user_id: user.id,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
+  if (error || !createdRfq) {
     console.error("Supplier RFQ create error:", error);
     redirect(`/app/opportunities/${opportunityId}?tab=rfqs&error=save`);
   }
@@ -364,10 +415,48 @@ export async function createSupplierRfqAction(opportunityId: string, formData: F
       parsed.data.status === "sent"
         ? `Supplier RFQ sent to ${parsed.data.supplier_name}`
         : `Supplier RFQ created for ${parsed.data.supplier_name}`,
-    metadata_json: { supplier_name: parsed.data.supplier_name },
+    metadata_json: { supplier_name: parsed.data.supplier_name, supplier_rfq_id: createdRfq.id },
   });
 
+  if (parsed.data.status === "sent") {
+    await advanceOpportunityStage(supabase, opportunity, "sent_for_pricing");
+    redirect(`/app/opportunities/${opportunityId}?tab=responses&saved=rfq_sent&rfqId=${createdRfq.id}`);
+  }
+
   redirect(`/app/opportunities/${opportunityId}?tab=rfqs&saved=rfq`);
+}
+
+export async function markSupplierRfqSentAction(opportunityId: string, rfqId: string) {
+  const { workspace, user, supabase, opportunity, rfq } = await requireSupplierRfq(opportunityId, rfqId);
+  const sentAt = rfq.sent_at || new Date().toISOString();
+
+  const { error } = await supabase
+    .from("supplier_rfqs")
+    .update({
+      status: "sent",
+      sent_at: sentAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", rfqId)
+    .eq("opportunity_id", opportunityId);
+
+  if (error) {
+    console.error("Supplier RFQ mark sent error:", error);
+    redirect(`/app/opportunities/${opportunityId}?tab=rfqs&error=save`);
+  }
+
+  await supabase.from("activity_logs").insert({
+    workspace_id: workspace.id,
+    opportunity_id: opportunityId,
+    user_id: user.id,
+    activity_type: "rfq_marked_sent",
+    activity_text: `Supplier RFQ sent to ${rfq.supplier_name}`,
+    metadata_json: { supplier_rfq_id: rfqId, supplier_name: rfq.supplier_name },
+  });
+
+  await advanceOpportunityStage(supabase, opportunity, "sent_for_pricing");
+
+  redirect(`/app/opportunities/${opportunityId}?tab=responses&saved=rfq_sent&rfqId=${rfqId}`);
 }
 
 export async function updateSupplierRfqAction(opportunityId: string, rfqId: string, formData: FormData) {
@@ -452,7 +541,7 @@ export async function duplicateSupplierRfqAction(opportunityId: string, rfqId: s
 }
 
 export async function createSupplierResponseAction(opportunityId: string, formData: FormData) {
-  const { workspace, user, supabase } = await requireEditableOpportunity(opportunityId);
+  const { workspace, user, supabase, opportunity } = await requireEditableOpportunity(opportunityId);
 
   const parsed = supplierResponseSchema.safeParse({
     supplier_rfq_id: formData.get("supplier_rfq_id"),
@@ -531,6 +620,12 @@ export async function createSupplierResponseAction(opportunityId: string, formDa
       preferred: parsed.data.selected_for_quote === "true",
     },
   });
+
+  await advanceOpportunityStage(supabase, opportunity, "supplier_response_received");
+
+  if (parsed.data.selected_for_quote === "true") {
+    redirect(`/app/opportunities/${opportunityId}?tab=quotes&saved=response_preferred`);
+  }
 
   redirect(`/app/opportunities/${opportunityId}?tab=responses&saved=response`);
 }
@@ -621,7 +716,7 @@ export async function updateSupplierResponseAction(opportunityId: string, respon
 }
 
 export async function createCustomerQuoteAction(opportunityId: string, formData: FormData) {
-  const { workspace, user, supabase } = await requireEditableOpportunity(opportunityId);
+  const { workspace, user, supabase, opportunity } = await requireEditableOpportunity(opportunityId);
 
   const parsed = customerQuoteSchema.safeParse({
     title: formData.get("title"),
@@ -677,7 +772,9 @@ export async function createCustomerQuoteAction(opportunityId: string, formData:
     metadata_json: { quote_number: quoteNumber },
   });
 
-  redirect(`/app/opportunities/${opportunityId}?tab=quotes&saved=quote`);
+  await advanceOpportunityStage(supabase, opportunity, parsed.data.status === "sent" ? "quote_sent" : "quote_ready");
+
+  redirect(`/app/opportunities/${opportunityId}?tab=quotes&saved=${parsed.data.status === "sent" ? "quote_sent" : "quote"}`);
 }
 
 export async function updateCustomerQuoteAction(opportunityId: string, quoteId: string, formData: FormData) {

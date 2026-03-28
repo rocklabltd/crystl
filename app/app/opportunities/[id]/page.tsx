@@ -8,16 +8,17 @@ import {
   createCustomerQuoteAction,
   createSupplierResponseAction,
   createSupplierRfqAction,
+  markSupplierRfqSentAction,
   saveStructuredRequirementAction,
   updateOpportunityWorkflowAction,
 } from "./actions";
 
 type PageParams = { id: string };
-type SearchParams = { tab ? : string; saved ? : string; error ? : string };
+type SearchParams = { tab ? : string; saved ? : string; error ? : string; rfqId ? : string };
 type ContactRecord = { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; company_name: string | null; country: string | null };
 type RequestRecord = { id: string; source: string; status: string; submitted_at: string; raw_payload_json: Record<string, unknown> };
 type StructuredRequirementRecord = { product_type: string | null; format: string | null; target_benefit: string | null; market: string | null; quantity_units: number | null; pack_size: string | null; packaging_type: string | null; formulation_support_needed: boolean | null; target_positioning: string | null; timeline: string | null; cleaned_summary: string | null; requirement_json: Record<string, unknown> | null };
-type SupplierRfqRecord = { id: string; supplier_name: string; supplier_contact_name: string | null; supplier_email: string | null; rfq_subject: string | null; status: string; sent_at: string | null; created_at: string };
+type SupplierRfqRecord = { id: string; supplier_name: string; supplier_contact_name: string | null; supplier_email: string | null; rfq_subject: string | null; rfq_body: string | null; status: string; sent_at: string | null; created_at: string };
 type SupplierResponseRecord = { id: string; supplier_rfq_id: string; moq: number | null; unit_price: number | null; currency: string; tooling_cost: number | null; formulation_cost: number | null; lead_time_days: number | null; response_notes: string | null; selected_for_quote: boolean; received_at: string | null };
 type QuoteRecord = { id: string; quote_number: string; version_number: number; title: string; currency: string; unit_price: number | null; moq: number | null; status: string; valid_until: string | null; sent_at: string | null };
 type ActivityRecord = { id: string; activity_type: string; activity_text: string; created_at: string };
@@ -57,7 +58,7 @@ function contactName(contact ? : ContactRecord | null) {
   return fullName || contact.company_name || "Unnamed contact";
 }
 function getFlashMessage(error ? : string, saved ? : string) {
-  const successMap: Record<string, string> = { workflow: "Opportunity workflow updated.", requirement: "Structured requirement saved.", rfq: "Supplier RFQ created.", rfq_updated: "Supplier RFQ updated.", rfq_duplicated: "Supplier RFQ duplicated as a draft.", response: "Supplier response logged.", response_updated: "Supplier response updated.", quote: "Customer quote created.", quote_updated: "Customer quote updated.", quote_revision: "Quote revision created as a draft." };
+  const successMap: Record<string, string> = { workflow: "Opportunity workflow updated.", requirement: "Structured requirement saved.", rfq: "Supplier RFQ created.", rfq_sent: "Supplier RFQ marked sent. Next step: capture the supplier response.", rfq_updated: "Supplier RFQ updated.", rfq_duplicated: "Supplier RFQ duplicated as a draft.", response: "Supplier response logged.", response_preferred: "Supplier response logged and set as the preferred pricing basis.", response_updated: "Supplier response updated.", quote: "Customer quote created.", quote_sent: "Customer quote created and marked sent.", quote_updated: "Customer quote updated.", quote_revision: "Quote revision created as a draft." };
   if (saved && successMap[saved]) return { tone: "success", text: successMap[saved] };
   switch (error) {
     case "forbidden": return { tone: "error", text: "Your role cannot edit this opportunity." };
@@ -184,6 +185,25 @@ function buildDefaultRfqBody(
   ]
     .filter((section): section is string => Boolean(section && section.trim()))
     .join("\n\n");
+}
+
+function buildMailtoHref(rfq: Pick<SupplierRfqRecord, "supplier_email" | "rfq_subject" | "rfq_body">) {
+  if (!rfq.supplier_email) {
+    return null;
+  }
+
+  const params = new URLSearchParams();
+
+  if (rfq.rfq_subject) {
+    params.set("subject", rfq.rfq_subject);
+  }
+
+  if (rfq.rfq_body) {
+    params.set("body", rfq.rfq_body);
+  }
+
+  const query = params.toString();
+  return `mailto:${rfq.supplier_email}${query ? `?${query}` : ""}`;
 }
 
 function formatCurrency(currency: string, amount: number) {
@@ -357,7 +377,7 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
     opportunity.contact_id ? supabase.from("contacts").select("id, first_name, last_name, email, phone, company_name, country").eq("id", opportunity.contact_id).single() : Promise.resolve({ data: null }),
     opportunity.request_id ? supabase.from("requests").select("id, source, status, submitted_at, raw_payload_json").eq("id", opportunity.request_id).single() : Promise.resolve({ data: null }),
     supabase.from("structured_requirements").select("product_type, format, target_benefit, market, quantity_units, pack_size, packaging_type, formulation_support_needed, target_positioning, timeline, cleaned_summary, requirement_json").eq("opportunity_id", opportunity.id).maybeSingle(),
-    supabase.from("supplier_rfqs").select("id, supplier_name, supplier_contact_name, supplier_email, rfq_subject, status, sent_at, created_at").eq("opportunity_id", opportunity.id).order("created_at", { ascending: false }),
+    supabase.from("supplier_rfqs").select("id, supplier_name, supplier_contact_name, supplier_email, rfq_subject, rfq_body, status, sent_at, created_at").eq("opportunity_id", opportunity.id).order("created_at", { ascending: false }),
     supabase.from("customer_quotes").select("id, quote_number, version_number, title, currency, unit_price, moq, status, valid_until, sent_at").eq("opportunity_id", opportunity.id).order("created_at", { ascending: false }),
     supabase.from("activity_logs").select("id, activity_type, activity_text, created_at").eq("workspace_id", workspace.id).eq("opportunity_id", opportunity.id).order("created_at", { ascending: false }),
   ]);
@@ -373,6 +393,8 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
   const responses = (responsesResult.data ?? []) as SupplierResponseRecord[];
   const preferredResponse = responses.find((response) => response.selected_for_quote) ?? responses[0] ?? null;
   const rfqMap = new Map(rfqs.map((rfq) => [rfq.id, rfq]));
+  const selectedRfqId = resolvedSearchParams.rfqId && rfqMap.has(resolvedSearchParams.rfqId) ? resolvedSearchParams.rfqId : "";
+  const selectedRfq = selectedRfqId ? rfqMap.get(selectedRfqId) ?? null : null;
   const updateWorkflow = updateOpportunityWorkflowAction.bind(null, opportunity.id);
   const saveRequirement = saveStructuredRequirementAction.bind(null, opportunity.id);
   const createRfq = createSupplierRfqAction.bind(null, opportunity.id);
@@ -595,29 +617,46 @@ export default async function OpportunityDetailPage({ params, searchParams }: { 
       {activeTab === "rfqs" ? (
         <section className="mt-6 space-y-6">
           <div className="rounded-3xl border border-black/8 bg-white p-6">
-            <h2 className="text-xl font-semibold text-neutral-950">Create supplier RFQ</h2>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-neutral-950">Create supplier RFQ</h2>
+                <p className="mt-2 text-sm text-neutral-600">Build the supplier brief here, then either keep it as a draft or mark it sent so the next step moves straight to response capture.</p>
+              </div>
+              <div className="rounded-2xl bg-[#faf7f2] px-4 py-3 text-sm text-neutral-700">
+                <p className="font-medium text-neutral-950">Recommended flow</p>
+                <p className="mt-1">1. Create the RFQ</p>
+                <p>2. Send or mark it sent</p>
+                <p>3. Log the supplier cost response</p>
+              </div>
+            </div>
             <form action={createRfq} className="mt-5 grid gap-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div><label htmlFor="supplier_name" className="block text-sm font-medium text-neutral-800">Supplier name</label><input id="supplier_name" name="supplier_name" className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" required /></div>
                 <div><label htmlFor="supplier_contact_name" className="block text-sm font-medium text-neutral-800">Supplier contact</label><input id="supplier_contact_name" name="supplier_contact_name" className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" /></div>
                 <div><label htmlFor="supplier_email" className="block text-sm font-medium text-neutral-800">Supplier email</label><input id="supplier_email" name="supplier_email" type="email" className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" /></div>
-                <div><label htmlFor="rfq_status" className="block text-sm font-medium text-neutral-800">Status</label><select id="rfq_status" name="status" defaultValue="draft" className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3"><option value="draft">Draft</option><option value="sent">Sent</option></select></div>
+                <div className="rounded-xl border border-dashed border-neutral-200 px-4 py-3 text-sm text-neutral-600"><p className="font-medium text-neutral-900">Sending later?</p><p className="mt-1">Save as a draft if you still need to review the supplier details. Use the primary action when the RFQ is ready to go out now.</p></div>
               </div>
               <div><label htmlFor="rfq_subject" className="block text-sm font-medium text-neutral-800">Subject</label><input id="rfq_subject" name="rfq_subject" defaultValue={defaultRfqSubject} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" /></div>
               <div><label htmlFor="rfq_body" className="block text-sm font-medium text-neutral-800">RFQ body</label><textarea id="rfq_body" name="rfq_body" defaultValue={defaultRfqBody} className="mt-1 min-h-40 w-full rounded-xl border border-neutral-200 px-4 py-3" /></div>
-              <button type="submit" className="inline-flex w-fit rounded-xl bg-neutral-950 px-4 py-3 text-sm font-medium text-white">Create supplier RFQ</button>
+              <div className="flex flex-wrap gap-3"><button type="submit" name="submit_intent" value="draft" className="inline-flex w-fit rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-900">Save RFQ draft</button><button type="submit" name="submit_intent" value="sent" className="inline-flex w-fit rounded-xl bg-neutral-950 px-4 py-3 text-sm font-medium text-white">Create RFQ and move to supplier response</button></div>
             </form>
           </div>
-          {rfqs.length ? rfqs.map((rfq) => <div key={rfq.id} className="rounded-3xl border border-black/8 bg-white p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold text-neutral-950">{rfq.supplier_name}</h2><p className="mt-1 text-sm text-neutral-600">{rfq.rfq_subject || "No subject"}</p></div><div className="flex items-center gap-3"><Link href={`/app/opportunities/${opportunity.id}/rfqs/${rfq.id}`} className="text-sm text-neutral-600 underline underline-offset-4">Edit</Link><span className="rounded-full border border-black/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-neutral-700">{rfq.status}</span></div></div><div className="mt-4 grid gap-3 text-sm text-neutral-600 md:grid-cols-3"><p>Contact: {rfq.supplier_contact_name || "Not set"}</p><p>Email: {rfq.supplier_email || "Not set"}</p><p>Sent: {formatDate(rfq.sent_at)}</p></div></div>) : <div className="rounded-3xl border border-black/8 bg-white p-8 text-sm text-neutral-600">No supplier RFQs created yet.</div>}
+          {rfqs.length ? rfqs.map((rfq) => {
+            const markSent = markSupplierRfqSentAction.bind(null, opportunity.id, rfq.id);
+            const mailtoHref = buildMailtoHref(rfq);
+
+            return <div key={rfq.id} className="rounded-3xl border border-black/8 bg-white p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-semibold text-neutral-950">{rfq.supplier_name}</h2><p className="mt-1 text-sm text-neutral-600">{rfq.rfq_subject || "No subject"}</p></div><div className="flex items-center gap-3"><Link href={`/app/opportunities/${opportunity.id}/rfqs/${rfq.id}`} className="text-sm text-neutral-600 underline underline-offset-4">Edit</Link><span className="rounded-full border border-black/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-neutral-700">{rfq.status}</span></div></div><div className="mt-4 grid gap-3 text-sm text-neutral-600 md:grid-cols-3"><p>Contact: {rfq.supplier_contact_name || "Not set"}</p><p>Email: {rfq.supplier_email || "Not set"}</p><p>Sent: {formatDate(rfq.sent_at)}</p></div><div className="mt-5 flex flex-wrap gap-3">{mailtoHref ? <a href={mailtoHref} className="inline-flex rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-900">Draft supplier email</a> : null}{rfq.status !== "sent" ? <form action={markSent}><button type="submit" className="inline-flex rounded-xl bg-neutral-950 px-4 py-2 text-sm font-medium text-white">Mark sent and capture response</button></form> : null}<Link href={`/app/opportunities/${opportunity.id}?tab=responses&rfqId=${rfq.id}`} className="inline-flex rounded-xl border border-neutral-200 px-4 py-2 text-sm font-medium text-neutral-900">Log supplier response</Link></div></div>;
+          }) : <div className="rounded-3xl border border-black/8 bg-white p-8 text-sm text-neutral-600">No supplier RFQs created yet.</div>}
         </section>
       ) : null}
       {activeTab === "responses" ? (
         <section className="mt-6 space-y-6">
           <div className="rounded-3xl border border-black/8 bg-white p-6">
             <h2 className="text-xl font-semibold text-neutral-950">Log supplier response</h2>
+            {selectedRfq ? <div className="mt-4 rounded-2xl bg-[#faf7f2] p-4 text-sm text-neutral-700"><p className="font-medium text-neutral-950">Capturing response for {selectedRfq.supplier_name}</p><p className="mt-1">Once you save a preferred response, the next step is creating the customer quote.</p></div> : null}
             <form action={createResponse} className="mt-5 grid gap-4">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <div><label htmlFor="supplier_rfq_id" className="block text-sm font-medium text-neutral-800">Supplier RFQ</label><select id="supplier_rfq_id" name="supplier_rfq_id" className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" required><option value="">Choose RFQ</option>{rfqs.map((rfq) => <option key={rfq.id} value={rfq.id}>{rfq.supplier_name}</option>)}</select></div>
+                <div><label htmlFor="supplier_rfq_id" className="block text-sm font-medium text-neutral-800">Supplier RFQ</label><select id="supplier_rfq_id" name="supplier_rfq_id" defaultValue={selectedRfqId} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" required><option value="">Choose RFQ</option>{rfqs.map((rfq) => <option key={rfq.id} value={rfq.id}>{rfq.supplier_name}</option>)}</select></div>
                 <div><label htmlFor="moq" className="block text-sm font-medium text-neutral-800">MOQ</label><input id="moq" name="moq" type="number" className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" /></div>
                 <div><label htmlFor="unit_price" className="block text-sm font-medium text-neutral-800">Unit price</label><input id="unit_price" name="unit_price" type="number" step="0.01" defaultValue={preferredResponse?.unit_price?.toString() || ""} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" /></div>
                 <div><label htmlFor="currency" className="block text-sm font-medium text-neutral-800">Currency</label><input id="currency" name="currency" defaultValue={preferredResponse?.currency || workspace.default_currency || "GBP"} className="mt-1 w-full rounded-xl border border-neutral-200 px-4 py-3" required /></div>
